@@ -21,8 +21,7 @@ make setup
 make dev
 ```
 
-- Frontend: http://localhost:3000
-- Backend: http://localhost:8000/health
+Site link: https://xxxashxxx.github.io/ipfo/
 
 If you don't have Docker/Node, open the static preview directly:
 - Open `preview/index.html` in your editor preview (no install required)

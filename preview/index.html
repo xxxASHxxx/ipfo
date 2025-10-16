@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IPFO Static Preview</title>
+    <style>
+      :root { --bg:#ffffff; --fg:#0f172a; --muted:#475569; --border:#e5e7eb; --accent:#ef4444; --panel:#f8fafc; }
+      [data-theme="dark"] { --bg:#0b1220; --fg:#e2e8f0; --muted:#94a3b8; --border:#1f2937; --accent:#f87171; --panel:#0f172a; }
+      html, body { margin:0; padding:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); color:var(--fg); }
+      .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+      .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+      .card { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: var(--panel); }
+      .muted { color: var(--muted); font-size: 14px; }
+      header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 16px; }
+      .badge { display:inline-block; padding: 2px 8px; border-radius: 999px; background:#eef2ff; color:#3730a3; font-size:12px; }
+      .btn { background: var(--fg); color: var(--bg); border:none; border-radius: 999px; padding:6px 10px; font-size:12px; cursor:pointer; }
+      .btn.secondary { background: transparent; color: var(--fg); border:1px solid var(--border); }
+      .toolbar { display:flex; gap:8px; align-items:center; }
+      canvas { width: 100%; height: 180px; }
+      table { width:100%; border-collapse: collapse; }
+      th, td { border-top: 1px solid var(--border); padding: 8px; text-align:left; font-size:14px; }
+      th { font-weight:600; }
+      .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+      input, select { background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:8px; padding:6px 8px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1 style="font-size:18px">IPFO — Static Preview</h1>
+        <div class="toolbar">
+          <button id="theme" class="btn secondary" title="Toggle theme">Toggle theme</button>
+          <button id="regen" class="btn secondary" title="Regenerate data">Regenerate</button>
+          <span class="badge">demo</span>
+        </div>
+      </header>
+      <main>
+        <h2 style="font-size:16px;margin:0 0 8px">Dashboard</h2>
+        <div class="grid">
+          <div class="card">
+            <div style="font-weight:600">Backend health</div>
+            <div id="health" class="muted">Loading...</div>
+          </div>
+          <div class="card">
+            <div style="font-weight:600">Total Spend (30d)</div>
+            <div class="muted" id="kpi-spend">₹0</div>
+          </div>
+          <div class="card">
+            <div style="font-weight:600">Top Category</div>
+            <div class="muted" id="kpi-topcat">—</div>
+          </div>
+        </div>
+        <div class="grid" style="margin-top:12px; grid-template-columns: 2fr 1fr;">
+          <div class="card">
+            <div style="font-weight:600; margin-bottom:8px">Spend over time</div>
+            <canvas id="chart"></canvas>
+          </div>
+          <div class="card">
+            <div style="font-weight:600; margin-bottom:8px">Category breakdown</div>
+            <canvas id="donut" style="height:220px"></canvas>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <div class="row" style="justify-content: space-between; margin-bottom:8px">
+            <div class="row">
+              <label class="muted">Category</label>
+              <select id="filter-category"></select>
+              <label class="muted">Min</label>
+              <input id="filter-min" type="number" style="width:100px" />
+              <label class="muted">Max</label>
+              <input id="filter-max" type="number" style="width:100px" />
+            </div>
+            <div class="row">
+              <button id="export" class="btn secondary">Export CSV</button>
+            </div>
+          </div>
+          <table>
+            <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Amount</th></tr></thead>
+            <tbody id="tx-body"></tbody>
+          </table>
+        </div>
+      </main>
+    </div>
+    <script>
+      // Mock data + state
+      const mockHealth = { status: 'healthy', timestamp: new Date().toISOString(), version: '0.1.0 (static)' };
+      const CATEGORIES = ['Groceries','Transport','Dining','Rent','Bills','Entertainment','Health'];
+      let spendData = [];
+      let transactions = [];
+
+      function genData() {
+        spendData = Array.from({length: 30}).map((_,i)=>({
+          date: new Date(Date.now() - (29-i)*24*3600*1000).toISOString().slice(0,10),
+          amount: Math.round(300 + Math.random()*1700)
+        }));
+        transactions = Array.from({length: 60}).map(()=>{
+          const category = CATEGORIES[Math.floor(Math.random()*CATEGORIES.length)];
+          const amount = Math.round(100 + Math.random()*4000);
+          const date = new Date(Date.now() - Math.floor(Math.random()*28)*24*3600*1000).toISOString().slice(0,10);
+          const desc = category+" purchase";
+          return { date, description: desc, category, amount };
+        });
+      }
+      genData();
+
+      // KPIs
+      const healthEl = document.getElementById('health');
+      const kpiSpend = document.getElementById('kpi-spend');
+      const kpiTop = document.getElementById('kpi-topcat');
+      healthEl.textContent = JSON.stringify(mockHealth);
+
+      function computeKPIs(rows) {
+        const total = rows.reduce((s,r)=> s + r.amount, 0);
+        const byCat = new Map();
+        rows.forEach(r => byCat.set(r.category, (byCat.get(r.category)||0) + r.amount));
+        let top = '—', max = -1;
+        byCat.forEach((v,k)=>{ if(v>max) { max=v; top=k; } });
+        kpiSpend.textContent = '₹' + total.toLocaleString('en-IN');
+        kpiTop.textContent = top;
+      }
+
+      // Line chart
+      const canvas = document.getElementById('chart');
+      const ctx = canvas.getContext('2d');
+      function drawLine() {
+        const w = canvas.clientWidth, h = canvas.clientHeight;
+        canvas.width = w * devicePixelRatio; canvas.height = h * devicePixelRatio; ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+        ctx.clearRect(0,0,w,h);
+        const pad = 20;
+        const xs = spendData.map((_,i)=> pad + i*( (w-2*pad)/(spendData.length-1) ));
+        const maxY = Math.max(...spendData.map(d=>d.amount))*1.1;
+        const ys = spendData.map(d=> h - pad - (d.amount/maxY)*(h-2*pad));
+        ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#ef4444';
+        ctx.lineWidth = 2; ctx.beginPath();
+        xs.forEach((x,i)=>{ const y=ys[i]; if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.stroke();
+        const grd = ctx.createLinearGradient(0,pad,0,h-pad);
+        grd.addColorStop(0,'rgba(239,68,68,0.35)'); grd.addColorStop(1,'rgba(239,68,68,0.0)');
+        ctx.fillStyle = grd; ctx.lineTo(xs[xs.length-1],h-pad); ctx.lineTo(xs[0],h-pad); ctx.closePath(); ctx.fill();
+      }
+
+      // Donut chart
+      const donut = document.getElementById('donut');
+      const dctx = donut.getContext('2d');
+      function drawDonut(rows) {
+        const w = donut.clientWidth, h = donut.clientHeight;
+        donut.width = w * devicePixelRatio; donut.height = h * devicePixelRatio; dctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+        dctx.clearRect(0,0,w,h);
+        const byCat = new Map();
+        rows.forEach(r => byCat.set(r.category, (byCat.get(r.category)||0) + r.amount));
+        const total = Array.from(byCat.values()).reduce((s,v)=>s+v,0) || 1;
+        const colors = ['#ef4444','#22c55e','#06b6d4','#a78bfa','#f59e0b','#e11d48','#10b981'];
+        let start = -Math.PI/2, i=0;
+        const cx=w/2, cy=h/2, r=Math.min(w,h)/2-10;
+        byCat.forEach((v,k)=>{
+          const angle = (v/total)*Math.PI*2;
+          dctx.beginPath(); dctx.moveTo(cx,cy); dctx.arc(cx,cy,r,start,start+angle); dctx.closePath(); dctx.fillStyle = colors[i++%colors.length]; dctx.fill();
+          start += angle;
+        });
+        // hole
+        dctx.globalCompositeOperation='destination-out';
+        dctx.beginPath(); dctx.arc(cx,cy,r*0.55,0,Math.PI*2); dctx.fill();
+        dctx.globalCompositeOperation='source-over';
+      }
+
+      // Table & filters
+      const tbody = document.getElementById('tx-body');
+      const fc = document.getElementById('filter-category');
+      const fmin = document.getElementById('filter-min');
+      const fmax = document.getElementById('filter-max');
+      function applyFilters() {
+        const cat = fc.value || '';
+        const min = Number(fmin.value || '0');
+        const max = Number(fmax.value || Number.POSITIVE_INFINITY);
+        return transactions.filter(t => (!cat || t.category===cat) && t.amount>=min && t.amount<=max);
+      }
+      function renderTable(rows) {
+        tbody.innerHTML = rows.map(r=>`<tr><td>${r.date}</td><td>${r.description}</td><td>${r.category}</td><td>₹${r.amount.toLocaleString('en-IN')}</td></tr>`).join('');
+      }
+      function renderFilters() {
+        fc.innerHTML = `<option value="">All</option>` + CATEGORIES.map(c=>`<option>${c}</option>`).join('');
+      }
+
+      // Export CSV
+      document.getElementById('export').addEventListener('click', ()=>{
+        const rows = applyFilters();
+        const header = ['date','description','category','amount'];
+        const csv = [header.join(',')].concat(rows.map(r=>`${r.date},"${r.description}",${r.category},${r.amount}`)).join('\n');
+        const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = 'transactions.csv'; a.click();
+      });
+
+      // Theme toggle & regenerate
+      document.getElementById('theme').addEventListener('click', ()=>{
+        const cur = document.documentElement.getAttribute('data-theme');
+        document.documentElement.setAttribute('data-theme', cur==='dark' ? 'light' : 'dark');
+        drawLine(); drawDonut(applyFilters());
+      });
+      document.getElementById('regen').addEventListener('click', ()=>{
+        genData();
+        drawLine();
+        const rows = applyFilters();
+        renderTable(rows); computeKPIs(rows); drawDonut(rows);
+      });
+
+      // Initial render
+      renderFilters();
+      drawLine();
+      const initial = applyFilters();
+      renderTable(initial); computeKPIs(initial); drawDonut(initial);
+      window.addEventListener('resize', ()=>{ drawLine(); drawDonut(applyFilters()); });
+    </script>
+  </body>
+  </html>
+
+
